@@ -1,1 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Shooter Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #scoreboard, #gameover {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 24px;
+        }
+        #gameover {
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            text-align: center;
+        }
+        #restartButton {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        #joystick, #fireButton {
+            position: absolute;
+            bottom: 20px;
+        }
+        #joystick {
+            left: 20px;
+        }
+        #fireButton {
+            right: 20px;
+            padding: 20px;
+            background: red;
+            color: white;
+            font-size: 24px;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="scoreboard">Score: 0 | Life: 3</div>
+    <div id="gameover">
+        <div>Game Over</div>
+        <button id="restartButton">Restart</button>
+    </div>
+    <div id="joystick"></div>
+    <button id="fireButton">Fire</button>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.7.3/dist/nipplejs.min.js"></script>
+    <script>
+        let scene, camera, renderer, player, score = 0, life = 3, obstacles = [], projectiles = [], enemyProjectiles = [];
+        const moveSpeed = 0.1;
+        const projectileSpeed = 0.2;
+        const enemyProjectileSpeed = 0.1;
+        const enemyBoundary = 10; // Enemy spawn boundary
+        let keys = {};
+
+        function init() {
+            // Set up scene, camera, and renderer
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Add a plane
+            const planeGeometry = new THREE.PlaneGeometry(100, 100);
+            const planeMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+            plane.rotation.x = -Math.PI / 2;
+            scene.add(plane);
+
+            // Add a player cube
+            const playerGeometry = new THREE.BoxGeometry(1, 1, 1);
+            const playerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            player = new THREE.Mesh(playerGeometry, playerMaterial);
+            player.position.y = 0.5;
+            scene.add(player);
+
+            // Camera position
+            camera.position.z = 10;
+            camera.position.y = 5;
+            camera.lookAt(0, 0, 0);
+
+            // Event listeners for keyboard
+            document.addEventListener('keydown', (event) => {
+                keys[event.key] = true;
+                if (event.key === ' ') shootProjectile();
+            });
+            document.addEventListener('keyup', (event) => {
+                keys[event.key] = false;
+            });
+
+            // Restart button event listener
+            document.getElementById('restartButton').addEventListener('click', restartGame);
+
+            // Fire button event listener
+            document.getElementById('fireButton').addEventListener('click', shootProjectile);
+
+            // Initialize joystick
+            initJoystick();
+
+            // Spawn the first enemy
+            spawnEnemy();
+
+            // Start animation loop
+            animate();
+        }
+
+        function initJoystick() {
+            const joystick = nipplejs.create({
+                zone: document.getElementById('joystick'),
+                mode: 'static',
+                position: { left: '50px', bottom: '50px' },
+                color: 'white'
+            });
+
+            joystick.on('move', (evt, data) => {
+                const forward = data.vector.y;
+                const sideways = data.vector.x;
+
+                player.position.z -= forward * moveSpeed;
+                player.position.x += sideways * moveSpeed;
+            });
+
+            joystick.on('end', () => {
+                keys = {};
+            });
+        }
+
+        function handlePlayerMovement() {
+            if (keys['w']) player.position.z -= moveSpeed;
+            if (keys['s']) player.position.z += moveSpeed;
+            if (keys['a']) player.position.x -= moveSpeed;
+            if (keys['d']) player.position.x += moveSpeed;
+        }
+
+        function shootProjectile() {
+            const projectileGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+            const projectileMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+            const projectile = new THREE.Mesh(projectileGeometry, projectileMaterial);
+            projectile.position.set(player.position.x, player.position.y, player.position.z);
+            projectiles.push(projectile);
+            scene.add(projectile);
+        }
+
+        function handleProjectiles() {
+            for (let i = 0; i < projectiles.length; i++) {
+                projectiles[i].position.z -= projectileSpeed;
+                // Check for collisions with obstacles
+                for (let j = 0; j < obstacles.length; j++) {
+                    if (projectiles[i].position.distanceTo(obstacles[j].position) < 1) {
+                        scene.remove(obstacles[j]);
+                        scene.remove(projectiles[i]);
+                        projectiles.splice(i, 1);
+                        obstacles.splice(j, 1);
+                        i--;
+                        score += 10;
+                        document.getElementById('scoreboard').innerText = `Score: ${score} | Life: ${life}`;
+                        spawnEnemy();
+                        break;
+                    }
+                }
+            }
+        }
+
+        function spawnEnemy() {
+            const obstacleGeometry = new THREE.BoxGeometry(1, 1, 1);
+            const obstacleMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff });
+            const obstacle = new THREE.Mesh(obstacleGeometry, obstacleMaterial);
+            obstacle.position.set(
+                Math.random() * enemyBoundary * 2 - enemyBoundary,
+                0.5,
+                Math.random() * enemyBoundary * 2 - enemyBoundary
+            );
+            obstacles.push(obstacle);
+            scene.add(obstacle);
+        }
+
+        function enemyShoot() {
+            for (let i = 0; i < obstacles.length; i++) {
+                if (Math.random() < 0.01) { // Random chance of shooting
+                    const enemyProjectileGeometry = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+                    const enemyProjectileMaterial = new THREE.MeshBasicMaterial({ color: 0xff00ff });
+                    const enemyProjectile = new THREE.Mesh(enemyProjectileGeometry, enemyProjectileMaterial);
+                    enemyProjectile.position.set(obstacles[i].position.x, obstacles[i].position.y, obstacles[i].position.z);
+                    enemyProjectiles.push(enemyProjectile);
+                    scene.add(enemyProjectile);
+                }
+            }
+        }
+
+        function handleEnemyProjectiles() {
+            for (let i = 0; i < enemyProjectiles.length; i++) {
+                enemyProjectiles[i].position.z += enemyProjectileSpeed;
+                if (enemyProjectiles[i].position.distanceTo(player.position) < 1) {
+                    scene.remove(enemyProjectiles[i]);
+                    enemyProjectiles.splice(i, 1);
+                    i--;
+                    life -= 1;
+                    document.getElementById('scoreboard').innerText = `Score: ${score} | Life: ${life}`;
+                    if (life <= 0) gameOver();
+                }
+            }
+        }
+
+        function gameOver() {
+            document.getElementById('gameover').style.display = 'block';
+            cancelAnimationFrame(animationId);
+        }
+
+        function restartGame() {
+            document.getElementById('gameover').style.display = 'none';
+            score = 0;
+            life = 3;
+            document.getElementById('scoreboard').innerText = `Score: ${score} | Life: ${life}`;
+            // Remove all objects from the scene
+            while (obstacles.length > 0) {
+                scene.remove(obstacles.pop());
+            }
+            while (projectiles.length > 0) {
+                scene.remove(projectiles.pop());
+            }
+            while (enemyProjectiles.length > 0) {
+                scene.remove(enemyProjectiles.pop());
+            }
+            player.position.set(0, 0.5, 0);
+            spawnEnemy();
+            animate();
+        }
+
+        let animationId;
+
+        function animate() {
+            animationId = requestAnimationFrame(animate);
+
+            handlePlayerMovement();
+            handleProjectiles();
+            handleEnemyProjectiles();
+            enemyShoot();
+
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
 
